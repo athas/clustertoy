@@ -52,12 +52,13 @@ module lys : lys with text_content = text_content = {
 
   type text_content = text_content
 
-  let mk_new_points [k][n][l] (new: [l](i32,i32))
+  let mk_new_points [k][n][l] (h: i32) (w: i32)
+                              (new: [l](i32,i32))
                               (ks: kmeans_state [k][n])
                             : ([l]i32,
                                kmeans_state [k][]) =
     let new_is = map (+n) (iota l)
-    let new_points = map (\(x,y) -> ([r32 x, r32 y], 0)) new
+    let new_points = map (\(y,x) -> ([r32 (y-h/2), r32 (x-w/2)], 0)) new
     in (new_is,
         ks with points = ks.points ++ new_points)
 
@@ -67,9 +68,9 @@ module lys : lys with text_content = text_content = {
     let change (y', x', i) =
       i < 0 && ((x' - x)**2 + (y' - y)**2) < r
     let to_change = mapi_2d f s.pixels |> flatten |> filter change
-    let (new_is, ks) =
-      mk_new_points (map (\(y',x',_) -> (y',x')) to_change) s.kmeans
     let (h, w) = (length s.pixels, length s.pixels[0])
+    let (new_is, ks) =
+      mk_new_points h w (map (\(y',x',_) -> (y',x')) to_change) s.kmeans
     let scatter_i (y', x', _) = y' * w + x'
     let pixels_flat = scatter (copy (flatten s.pixels)) (map scatter_i to_change) new_is
     in s with pixels = unflatten h w pixels_flat
@@ -95,15 +96,17 @@ module lys : lys with text_content = text_content = {
                 else -1
     in s with pixels = tabulate_2d h w f
 
-  let colours = argb.([black,
-                       red,
-                       green,
-                       blue,
-                       brown,
-                       yellow,
-                       orange,
-                       magenta,
-                       violet])
+  let base_colours =
+    argb.([black,
+           red,
+           green,
+           blue,
+           brown,
+           yellow,
+           orange,
+           magenta,
+           violet])
+  let colours = base_colours ++ map argb.dark base_colours ++ map argb.light base_colours
 
   let render (s: state) : [][]argb.colour =
     let on_pixel i =
