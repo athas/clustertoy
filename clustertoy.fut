@@ -24,69 +24,89 @@ let centroids_of [n][d] (k: i32) (points: [n][d]f32) (membership: [n]i32): [k][d
   in map2 (\point n -> map (/r32 (if n == 0 then 1 else n)) point)
           cluster_sums points_in_clusters
 
-let kmeans_step [k][n][d]
-                (cluster_centres: [k][d]f32)
-                (points: [n][d]f32)
-               : ([n]i32, [k][d]f32) =
+let kmeans_step [n][d]
+                (k: i32) (assignments: [n]([d]f32, i32))
+               : [n]i32 =
+  let (points, old_membership) = unzip assignments
+  let cluster_centres = centroids_of k points old_membership
   let membership = map (find_nearest_point cluster_centres) points
-  let cluster_centres = centroids_of k points membership
-  in (membership, cluster_centres)
+  in membership
 
 import "lib/github.com/diku-dk/lys/lys"
 import "lib/github.com/athas/matte/colour"
+import "lib/github.com/diku-dk/cpprandom/random"
 
-type kmeans_state [k][n] =
-  { points: [n]([2]f32, i32)
-  , centres: [k][2]f32
-  }
+module rnge = minstd_rand
+type rng = rnge.rng
+module dist = uniform_int_distribution i32 rnge
 
-type text_content = f32
+type text_content = (i32,i32,f32)
 
-let mapi_2d 'a 'b [n][m] (f: i32 -> i32 -> a -> b) (ass: [n][m]a) : [n][m]b =
-  map2 (\y as -> map2 (\x a -> f y x a) (iota m) as) (iota n) ass
+let initial_clusters (k: i32) (rng: rng) : (rng, [k]argb.colour) =
+  let (rngs, colours) =
+    rng
+    |> rnge.split_rng k
+    |> map (dist.rand (0, 0xFFFFFF))
+    |> unzip
+  in (rnge.join_rng rngs,
+      colours)
 
 module lys : lys with text_content = text_content = {
-  type~ state = { kmeans: kmeans_state [][]
+  type~ state = { points: []([2]f32, i32)
                 , pixels: [][]i32
+                , clusters: []argb.colour
+                , rng: rng
                 }
 
   type text_content = text_content
 
-  let mk_new_points [k][n][l] (h: i32) (w: i32)
-                              (new: [l](i32,i32))
-                              (ks: kmeans_state [k][n])
-                            : ([l]i32,
-                               kmeans_state [k][]) =
+  let mk_new_points [n][l] (h: i32) (w: i32) (k: i32)
+                           (new: [l](i32,i32))
+                           (old_points: [n]([2]f32, i32))
+                         : ([l]i32,
+                            []([2]f32, i32)) =
     let new_is = map (+n) (iota l)
-    let new_points = map (\(y,x) -> ([r32 (y-h/2), r32 (x-w/2)], 0)) new
+    let new_points = map2 (\(y,x) i -> ([r32 (y-h/2), r32 (x-w/2)], i % k))
+                          new (iota l)
     in (new_is,
-        ks with points = ks.points ++ new_points)
+        old_points ++ new_points)
 
-  let mouse_at y x (s: state) : state =
-    let r = 200
-    let f y' x' i = (y', x', i)
-    let change (y', x', i) =
-      i < 0 && ((x' - x)**2 + (y' - y)**2) < r
-    let to_change = mapi_2d f s.pixels |> flatten |> filter change
+  let points_at y x (s: state) : state =
+    let d = 50
     let (h, w) = (length s.pixels, length s.pixels[0])
-    let (new_is, ks) =
-      mk_new_points h w (map (\(y',x',_) -> (y',x')) to_change) s.kmeans
-    let scatter_i (y', x', _) = y' * w + x'
-    let pixels_flat = scatter (copy (flatten s.pixels)) (map scatter_i to_change) new_is
+    let f i j =
+      let y' = i + y - (d/2)
+      let x' = j + x - (d/2)
+      let p = if y' >= 0 && y' < h && x' >= 0 && x' < w
+              then unsafe s.pixels[y', x']
+              else 1337
+      in ((y', x'),
+          p < 0 && ((x' - x)**2 + (y' - y)**2) < (d/2)**2)
+    let to_add = tabulate_2d d d f |> flatten |> filter (.1) |> map (.0)
+    let (new_is, points) =
+      mk_new_points h w (length s.clusters) to_add s.points
+    let scatter_i (y', x') = y' * w + x'
+    let pixels_flat = scatter (copy (flatten s.pixels)) (map scatter_i to_add) new_is
     in s with pixels = unflatten h w pixels_flat
-         with kmeans = ks
+         with points = points
+
+  let add_cluster (s: state) : state =
+    let (rng, cluster_colour) = dist.rand (0, 0xFFFFFF) s.rng
+    in s with rng = rng
+         with clusters = s.clusters ++ [cluster_colour]
 
   let event (e: event) (s: state) : state =
     match e
     case #mouse {buttons, x, y} ->
-      if buttons != 0
-      then mouse_at y x s
+      if buttons & 1 != 0
+      then points_at y x s
+      else if buttons & 4 != 0
+      then add_cluster s
       else s
     case #step _ ->
-      let (membership, centres) =
-        kmeans_step (s.kmeans.centres) (map (.0) s.kmeans.points)
-      let points = zip (map (.0) s.kmeans.points) membership
-      in s with kmeans = {points, centres}
+      let membership = kmeans_step (length s.clusters) s.points
+      let points = zip (map (.0) s.points) membership
+      in s with points = points
     case _ -> s
 
   let resize h w (s: state) : state =
@@ -96,38 +116,29 @@ module lys : lys with text_content = text_content = {
                 else -1
     in s with pixels = tabulate_2d h w f
 
-  let base_colours =
-    argb.([black,
-           red,
-           green,
-           blue,
-           brown,
-           yellow,
-           orange,
-           magenta,
-           violet])
-  let colours = base_colours ++ map argb.dark base_colours ++ map argb.light base_colours
-
   let render (s: state) : [][]argb.colour =
     let on_pixel i =
       if i >= 0
-      then let c = (s.kmeans.points[i]).1
-           in colours[c]
+      then let c = (s.points[i]).1
+           in s.clusters[c]
       else argb.white
     in map (map on_pixel) (s.pixels)
 
-  let init _ (h: i32) (w: i32) : state =
-    let k = length colours
-    let ks = {points=[],
-              centres = tabulate k (\i -> [r32 i * (r32 h/r32 k),
-                                           r32 i * (r32 w/r32 k)])
-             }
-    in { kmeans = ks,
-         pixels = tabulate_2d h w (\_ _ -> -1)
+  let init seed (h: i32) (w: i32) : state =
+    let rng = rnge.rng_from_seed [i32.u32 seed]
+    let k = 5
+    let (rng, clusters) = initial_clusters k rng
+    in { points = []
+       , pixels = tabulate_2d h w (\_ _ -> -1)
+       , rng
+       , clusters
        }
 
   let grab_mouse = false
-  let text_format () = "FPS: %f"
-  let text_content fps _ = fps
+  let text_format () = "k: %d    n: %d    FPS: %f"
+  let text_content fps (s: state) =
+    (length (s.clusters),
+     length s.points,
+     fps)
   let text_colour _ = argb.blue
 }
