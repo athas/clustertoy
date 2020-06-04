@@ -78,7 +78,7 @@ module lys : lys with text_content = text_content = {
       let y' = i + y - (d/2)
       let x' = j + x - (d/2)
       let p = if y' >= 0 && y' < h && x' >= 0 && x' < w
-              then unsafe s.pixels[y', x']
+              then s.pixels[y', x']
               else 1337
       in ((y', x'),
           p < 0 && ((x' - x)**2 + (y' - y)**2) < (d/2)**2)
