@@ -6,26 +6,26 @@ let closest_point (p1: (i32,f32)) (p2: (i32,f32)): (i32,f32) =
 
 let find_nearest_point [k][d] (pts: [k][d]f32) (pt: [d]f32): i32 =
   let (i, _) = reduce_comm closest_point (0, euclid_dist_2 pt pts[0])
-               (zip (iota k) (map (euclid_dist_2 pt) pts))
+               (zip (map i32.i64 (iota k)) (map (euclid_dist_2 pt) pts))
   in i
 
 let add_centroids [d] (x: [d]f32) (y: [d]f32): *[d]f32 =
   map2 (+) x y
 
-let centroids_of [n][d] (k: i32) (points: [n][d]f32) (membership: [n]i32): [k][d]f32 =
+let centroids_of [n][d] (k: i64) (points: [n][d]f32) (membership: [n]i32): [k][d]f32 =
   let points_in_clusters =
-    reduce_by_index (replicate k 0) (+) 0 membership (replicate n 1)
+    reduce_by_index (replicate k 0) (+) 0 (map i64.i32 membership) (replicate n 1)
 
   let cluster_sums =
     reduce_by_index (replicate k (replicate d 0)) (map2 (+)) (replicate d 0)
-                    membership
+                    (map i64.i32 membership)
                     points
 
   in map2 (\point n -> map (/r32 (if n == 0 then 1 else n)) point)
           cluster_sums points_in_clusters
 
 let kmeans_step [n][d]
-                (k: i32) (assignments: [n]([d]f32, i32))
+                (k: i64) (assignments: [n]([d]f32, i32))
                : [n]i32 =
   let (points, old_membership) = unzip assignments
   let cluster_centres = centroids_of k points old_membership
@@ -38,11 +38,11 @@ import "lib/github.com/diku-dk/cpprandom/random"
 
 module rnge = minstd_rand
 type rng = rnge.rng
-module dist = uniform_int_distribution i32 rnge
+module dist = uniform_int_distribution u32 rnge
 
 type text_content = (i32,i32,f32)
 
-let initial_clusters (k: i32) (rng: rng) : (rng, [k]argb.colour) =
+let initial_clusters (k: i64) (rng: rng) : (rng, [k]argb.colour) =
   let (rngs, colours) =
     rng
     |> rnge.split_rng k
@@ -60,13 +60,14 @@ module lys : lys with text_content = text_content = {
 
   type text_content = text_content
 
-  let mk_new_points [n][l] (h: i32) (w: i32) (k: i32)
-                           (new: [l](i32,i32))
+  let mk_new_points [n][l] (h: i64) (w: i64) (k: i64)
+                           (new: [l](i64,i64))
                            (old_points: [n]([2]f32, i32))
-                         : ([l]i32,
+                         : ([l]i64,
                             []([2]f32, i32)) =
     let new_is = map (+n) (iota l)
-    let new_points = map2 (\(y,x) i -> ([r32 (y-h/2), r32 (x-w/2)], i % k))
+    let new_points = map2 (\(y,x) i -> ([f32.i64 (y-h/2), f32.i64 (x-w/2)],
+                                        i32.i64 (i % k)))
                           new (iota l)
     in (new_is,
         old_points ++ new_points)
@@ -86,7 +87,9 @@ module lys : lys with text_content = text_content = {
     let (new_is, points) =
       mk_new_points h w (length s.clusters) to_add s.points
     let scatter_i (y', x') = y' * w + x'
-    let pixels_flat = scatter (copy (flatten s.pixels)) (map scatter_i to_add) new_is
+    let pixels_flat = scatter (copy (flatten s.pixels))
+                              (map scatter_i to_add)
+                              (map i32.i64 new_is)
     in s with pixels = unflatten h w pixels_flat
          with points = points
 
@@ -99,7 +102,7 @@ module lys : lys with text_content = text_content = {
     match e
     case #mouse {buttons, x, y} ->
       if buttons & 1 != 0
-      then points_at y x s
+      then points_at (i64.i32 y) (i64.i32 x) s
       else if buttons & 4 != 0
       then add_cluster s
       else s
@@ -124,7 +127,7 @@ module lys : lys with text_content = text_content = {
       else argb.white
     in map (map on_pixel) (s.pixels)
 
-  let init seed (h: i32) (w: i32) : state =
+  let init seed h w : state =
     let rng = rnge.rng_from_seed [i32.u32 seed]
     let k = 5
     let (rng, clusters) = initial_clusters k rng
@@ -137,8 +140,8 @@ module lys : lys with text_content = text_content = {
   let grab_mouse = false
   let text_format () = "k: %d    n: %d    FPS: %f"
   let text_content fps (s: state) =
-    (length (s.clusters),
-     length s.points,
+    (i32.i64 (length (s.clusters)),
+     i32.i64 (length s.points),
      fps)
   let text_colour _ = argb.blue
 }
