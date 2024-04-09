@@ -92,7 +92,7 @@ module lys : lys with text_content = text_content = {
     let pixels_flat = scatter (copy (flatten s.pixels))
                               (map scatter_i to_add)
                               new_is
-    in s with pixels = unflatten h w pixels_flat
+    in s with pixels = unflatten pixels_flat
          with points = points
 
   let add_cluster (x: i32) (y: i32) (s: state) : state =
